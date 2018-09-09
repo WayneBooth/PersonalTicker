@@ -1,658 +1,206 @@
-#include <LEDMatrixDriver.hpp>
+//define PAROLAOUT 1
+
+#ifdef PAROLAOUT
+#include <MD_Parola.h>
+#include <MD_MAX72xx.h>
+#endif
+
 #include <Adafruit_ESP8266.h>
 #include <SoftwareSerial.h>
+
+#include <MSFDecoder.h>
+
+#ifdef PAROLAOUT
+#define HARDWARE_TYPE MD_MAX72XX::FC16_HW
+#define MAX_DEVICES 8
+#define PAUSE_TIME 500
+#define SCROLL_SPEED 5
+#define CS_PIN 14
+
+MD_Parola P = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
+#endif
+
+// Links to an ESP8266
+#define ESP_RX   8
+#define ESP_TX   9
+#define ESP_RST  10
+
 #include "secrets.h"
-
-// Links to an ESP8266
-#define ESP_RX   8
-#define ESP_TX   9
-#define ESP_RST  10
-#define LED_PIN  5
-
-#define HOST     "www.adafruit.com"     // Host to contact
-#define PAGE     "/testwifi/index.html" // Web page to request
+#define HOST     "script.google.com"     // Host to contact
+#define PAGE     "/macros/s/AKfycbxpb_mqMl1YqnP54bmL-ABGb5cRC4Dab6b2a0Hz41GCgoaipR8O/exec" // Web page to request
 #define PORT     80                     // 80 = HTTP default port
 
-// Define the ChipSelect pin for the led matrix (Dont use the SS or MISO pin of your Arduino!)
-// Other pins are arduino specific SPI pins (MOSI=DIN of the LEDMatrix and CLK) see https://www.arduino.cc/en/Reference/SPI
-const uint8_t LEDMATRIX_CS_PIN = 19;
+#define DATA   {"data":[{"Current Date":{"start":"swipe","transition":"drop","entries":[{"entry":"Sat Aug 25 2018"}]}},{"Time Data Collected":{"start":"swipe","transition":"drop","entries":[{"entry":"22:57:13 GMT+0100 (BST)"}]}},{"Family Calendar Events":{"start":"swipe","transition":"drop","entries":[{"entry":"Some holiday"},{"entry":"other event"},{"entry":"more stuff"}]}},{"Current Time":{"start":"swipe","transition":"drop","entries":[{"function":"getCurrentTime()"}]}},{"UK News":{"start":"swipe","transition":"drop","entries":[{"entry":"Papal visit: Pope shamed by Church's abuse failures : On a historic visit to Ireland, Pope Francis reportedly condemns abuse in the Church as \"filth\"."},{"entry":"Abuse scandal is 'source of pain' : Pope Francis and Taoiseach Leo Varadkar addressed the child sex abuse scandal in the Catholic church."},{"entry":"Egypt hotel deaths: 'No toxic gas in UK couple's room' : British holidaymakers have been flown home from a hotel in Egypt where a couple died."},{"entry":"Lindsay Kemp, performer and Bowie mentor, dies at 80 : He mentored David Bowie and taught dance to Kate Bush, who calls him a \"truly original and great artist\"."}]}},{"Current Time":{"start":"swipe","transition":"drop","entries":[{"function":"getCurrentTime()"}]}},{"Kirkcaldy Weather":{"start":"swipe","transition":"drop","entries":[{"entry":"Saturday: Partly Cloudy, Minimum Temperature: 6°C (42°F) : Minimum Temperature: 6°C (42°F), Wind Direction: South Westerly, Wind Speed: 11mph, Visibility: Very Good, Pressure: 1012mb, Humidity: 71%, UV Risk: 3, Pollution: Low, Sunset: 20:26 BST"},{"entry":"Sunday: Light Rain Showers, Minimum Temperature: 9°C (48°F) Maximum Temperature: 13°C (55°F) : Maximum Temperature: 13°C (55°F), Minimum Temperature: 9°C (48°F), Wind Direction: South Easterly, Wind Speed: 12mph, Visibility: Good, Pressure: 1003mb, Humidity: 91%, UV Risk: 1, Pollution: Low, Sunrise: 06:04 BST, Sunset: 20:24 BST"}]}},{"Current Time":{"start":"swipe","transition":"drop","entries":[{"function":"getCurrentTime()"}]}},{"Gold Price":{"start":"swipe","transition":"drop","entries":"£938.64"}}]}'
 
-// Define LED Matrix dimensions (0-n) - eg: 32x8 = 31x7
-const int LEDMATRIX_WIDTH = 63;  
-const int LEDMATRIX_HEIGHT = 7;
-const int LEDMATRIX_SEGMENTS = 8;
-
-int x=0, y=0;   // start top left
-
-// This is the font definition. You can use http://gurgleapps.com/tools/matrix to create your own font or sprites.
-// If you like the font feel free to use it. I created it myself and donate it to the public domain.
-const byte font[93][8] = { {0,0,0,0,0,0,0,0}, // SPACE
-                     {0x10,0x18,0x18,0x18,0x18,0x00,0x18,0x18}, // EXCL
-                     {0x28,0x28,0x08,0x00,0x00,0x00,0x00,0x00}, // QUOT
-                     {0x00,0x0a,0x7f,0x14,0x28,0xfe,0x50,0x00}, // #
-                     {0x10,0x38,0x54,0x70,0x1c,0x54,0x38,0x10}, // $
-                     {0x00,0x60,0x66,0x08,0x10,0x66,0x06,0x00}, // %
-                     {0,0,0,0,0,0,0,0}, // &
-                     {0x00,0x10,0x18,0x18,0x08,0x00,0x00,0x00}, // '
-                     {0x02,0x04,0x08,0x08,0x08,0x08,0x08,0x04}, // (
-                     {0x40,0x20,0x10,0x10,0x10,0x10,0x10,0x20}, // )
-                     {0x00,0x10,0x54,0x38,0x10,0x38,0x54,0x10}, // *
-                     {0x00,0x08,0x08,0x08,0x7f,0x08,0x08,0x08}, // +
-                     {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x08}, // COMMA
-                     {0x00,0x00,0x00,0x00,0x7e,0x00,0x00,0x00}, // -
-                     {0x00,0x00,0x00,0x00,0x00,0x00,0x06,0x06}, // DOT
-                     {0x00,0x04,0x04,0x08,0x10,0x20,0x40,0x40}, // /
-                     
-                     {0x00,0x38,0x44,0x4c,0x54,0x64,0x44,0x38}, // 0
-                     {0x04,0x0c,0x14,0x24,0x04,0x04,0x04,0x04}, // 1
-                     {0x00,0x30,0x48,0x04,0x04,0x38,0x40,0x7c}, // 2
-                     {0x00,0x38,0x04,0x04,0x18,0x04,0x44,0x38}, // 3
-                     {0x00,0x04,0x0c,0x14,0x24,0x7e,0x04,0x04}, // 4
-                     {0x00,0x7c,0x40,0x40,0x78,0x04,0x04,0x38}, // 5
-                     {0x00,0x38,0x40,0x40,0x78,0x44,0x44,0x38}, // 6
-                     {0x00,0x7c,0x04,0x04,0x08,0x08,0x10,0x10}, // 7
-                     {0x00,0x3c,0x44,0x44,0x38,0x44,0x44,0x78}, // 8
-                     {0x00,0x38,0x44,0x44,0x3c,0x04,0x04,0x78}, // 9
-                     
-                     {0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x00}, // :
-                     {0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x08}, // ;
-                     {0x00,0x10,0x20,0x40,0x80,0x40,0x20,0x10}, // <
-                     {0x00,0x00,0x7e,0x00,0x00,0xfc,0x00,0x00}, // =
-                     {0x00,0x08,0x04,0x02,0x01,0x02,0x04,0x08}, // >
-                     {0x00,0x38,0x44,0x04,0x08,0x10,0x00,0x10}, // ?
-                     {0x00,0x30,0x48,0xba,0xba,0x84,0x78,0x00}, // @
-                     
-                     {0x00,0x1c,0x22,0x42,0x42,0x7e,0x42,0x42}, // A
-                     {0x00,0x78,0x44,0x44,0x78,0x44,0x44,0x7c}, // B
-                     {0x00,0x3c,0x44,0x40,0x40,0x40,0x44,0x7c}, // C
-                     {0x00,0x7c,0x42,0x42,0x42,0x42,0x44,0x78}, // D
-                     {0x00,0x78,0x40,0x40,0x70,0x40,0x40,0x7c}, // E
-                     {0x00,0x7c,0x40,0x40,0x78,0x40,0x40,0x40}, // F
-                     {0x00,0x3c,0x40,0x40,0x5c,0x44,0x44,0x78}, // G
-                     {0x00,0x42,0x42,0x42,0x7e,0x42,0x42,0x42}, // H
-                     {0x00,0x7c,0x10,0x10,0x10,0x10,0x10,0x7e}, // I
-                     {0x00,0x7e,0x02,0x02,0x02,0x02,0x04,0x38}, // J
-                     {0x00,0x44,0x48,0x50,0x60,0x50,0x48,0x44}, // K
-                     {0x00,0x40,0x40,0x40,0x40,0x40,0x40,0x7c}, // L
-                     {0x00,0x82,0xc6,0xaa,0x92,0x82,0x82,0x82}, // M
-                     {0x00,0x42,0x42,0x62,0x52,0x4a,0x46,0x42}, // N
-                     {0x00,0x3c,0x42,0x42,0x42,0x42,0x44,0x38}, // O
-                     {0x00,0x78,0x44,0x44,0x48,0x70,0x40,0x40}, // P
-                     {0x00,0x3c,0x42,0x42,0x52,0x4a,0x44,0x3a}, // Q
-                     {0x00,0x78,0x44,0x44,0x78,0x50,0x48,0x44}, // R
-                     {0x00,0x38,0x40,0x40,0x38,0x04,0x04,0x78}, // S
-                     {0x00,0x7e,0x90,0x10,0x10,0x10,0x10,0x10}, // T
-                     {0x00,0x42,0x42,0x42,0x42,0x42,0x42,0x3e}, // U
-                     {0x00,0x42,0x42,0x42,0x42,0x44,0x28,0x10}, // V
-                     {0x80,0x82,0x82,0x92,0x92,0x92,0x94,0x78}, // W
-                     {0x00,0x42,0x42,0x24,0x18,0x24,0x42,0x42}, // X
-                     {0x00,0x44,0x44,0x28,0x10,0x10,0x10,0x10}, // Y
-                     {0x00,0x7c,0x04,0x08,0x7c,0x20,0x40,0xfe}, // Z
-
-                     {0x00,0x7e,0x40,0x40,0x40,0x40,0x40,0x7e}, // [
-                     {0x00,0x40,0x40,0x20,0x10,0x08,0x04,0x04}, // \
-                     {0x00,0x78,0x02,0x02,0x02,0x02,0x02,0x7c}, // ]
-                     {0x00,0x7c,0x42,0x00,0x00,0x00,0x00,0x00}, // ^
-                     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xfe}, // _
-                     {0x00,0x30,0x48,0xba,0xba,0x84,0x78,0x00}, // @
-                     {0x00,0x30,0x48,0xba,0xba,0x84,0x78,0x00}, // @
-                     
-                     {0x00,0x00,0x00,0x3c,0x06,0x3e,0x66,0x3e}, // a
-                     {0x00,0x60,0x60,0x60,0x7c,0x66,0x66,0x7c}, // b
-                     {0x00,0x00,0x00,0x3c,0x66,0x60,0x66,0x3c}, // c
-                     {0x00,0x06,0x06,0x06,0x3e,0x66,0x66,0x3e}, // d
-                     {0x00,0x00,0x00,0x3c,0x66,0x7e,0x60,0x3c}, // e
-                     {0x00,0x1c,0x36,0x30,0x30,0x7c,0x30,0x30}, // f
-                     {0x00,0x00,0x3e,0x66,0x66,0x3e,0x06,0x3c}, // g
-                     {0x00,0x60,0x60,0x60,0x7c,0x66,0x66,0x66}, // h
-                     {0x00,0x00,0x18,0x00,0x38,0x18,0x18,0x3c}, // i
-                     {0x00,0x0c,0x00,0x0c,0x0c,0x6c,0x6c,0x38}, // j
-                     {0x00,0x60,0x60,0x66,0x6c,0x78,0x6c,0x66}, // k
-                     {0x00,0x18,0x18,0x18,0x18,0x18,0x18,0x18}, // l
-                     {0x00,0x00,0x00,0x63,0x77,0x7f,0x6b,0x6b}, // m
-                     {0x00,0x00,0x00,0x7c,0x7e,0x66,0x66,0x66}, // n
-                     {0x00,0x00,0x00,0x3c,0x66,0x66,0x66,0x3c}, // o
-                     {0x00,0x00,0x7c,0x66,0x66,0x7c,0x60,0x60}, // p
-                     {0x00,0x00,0x3c,0x6c,0x6c,0x3c,0x0d,0x0f}, // q
-                     {0x00,0x00,0x00,0x7c,0x66,0x66,0x60,0x60}, // r
-                     {0x00,0x00,0x00,0x3e,0x40,0x3c,0x02,0x7c}, // s
-                     {0x00,0x00,0x18,0x18,0x7e,0x18,0x18,0x18}, // t                     
-                     {0x00,0x00,0x00,0x66,0x66,0x66,0x66,0x3e}, // u
-                     {0x00,0x00,0x00,0x66,0x66,0x66,0x3c,0x18}, // v                     
-                     {0x00,0x00,0x00,0x63,0x6b,0x6b,0x6b,0x3e}, // w                     
-                     {0x00,0x00,0x00,0x66,0x3c,0x18,0x3c,0x66}, // x                     
-                     {0x00,0x00,0x00,0x66,0x66,0x3e,0x06,0x3c}, // y                     
-                     {0x00,0x00,0x00,0x3c,0x0c,0x18,0x30,0x3c}, // z
-                      // (the font does not contain any lower case letters. you can add your own.)
-                  };    // {}, // 
-
-// Marquee speed
-const int ANIM_DELAY = 25;
-
-// Marquee text 
-char text[] = "The Quick Brown Fox Jumped Over The Lazy Dog!";
-int len = strlen(text);
-
-
-LEDMatrixDriver lmd(LEDMATRIX_SEGMENTS, LEDMATRIX_CS_PIN);
 SoftwareSerial softser(ESP_RX, ESP_TX);
+#ifndef PAROLAOUT
 Adafruit_ESP8266 wifi(&softser, &Serial, ESP_RST);
+#else
+Adafruit_ESP8266 wifi(&softser, NULL, ESP_RST);
+#endif
+
+MSFDecoder MSF;
 
 char buffer[50];
 
 void setup() {
-  // init the display
-  lmd.setEnabled(true);
-  lmd.setIntensity(5);   // 0 = low, 10 = high
 
-  printString("Starting");
+  pinMode(4, OUTPUT);
+  digitalWrite(4, HIGH);
   
-  // Flash LED on power-up
-  pinMode(LED_PIN, OUTPUT);
-  for(uint8_t i=0; i<3; i++) {
-    digitalWrite(LED_PIN, HIGH); delay(50);
-    digitalWrite(LED_PIN, LOW);  delay(100);
-  }
-    
   wifi.setBootMarker(F("Version:0.9.2.4]\r\n\r\nready"));
 
   softser.begin(9600); // Soft serial connection to ESP8266
+#ifndef PAROLAOUT
   Serial.begin(115200); while(!Serial); // UART serial debug
+#else
+  P.begin();
+#endif
 
-  printString("ESP8266...");
-    
-  // Test if module is ready
-  printString("Hard reset");
+  MSF.init();
+  printString(DATA);
+  printString(F("Starting..."));
+
+  while( ! MSF.getHasCarrier() ) {}
+  printString(F("Carrier Found"));
+
+  digitalWrite(4, LOW);
+
+  printString(F("Init ESP8266"));
+ 
+  printString(F("Hard Reset"));
   if(!wifi.hardReset()) {
-    printString("no response from module.");
+    printString(F("Error on hard reset."));
     for(;;);
   }
 
-  printString("Soft reset");
+  printString(F("Soft Reset"));
   if(!wifi.softReset()) {
-    printString("no response from module.");
+    printString(F("Error on soft reset."));
     for(;;);
   }
 
-  printString("Set Baud");
+  printString(F("Set Baud"));
   wifi.println(F("AT+UART_DEF=9600,8,1,0,0"));
   if(wifi.readLine(buffer, sizeof(buffer))) {
-    Serial.print("Response = ");
-    Serial.println(buffer);
+    printString(F("Response = "));
+    printString(buffer);
     wifi.find(); // Discard the 'OK' that follows
   } else {
-    Serial.print("error");
+    printString(F("Baud: Error"));
   }
-  
-  printString("Checking firmware version...");
+
+  printString(F("Checking firmware version..."));
   wifi.println(F("AT+GMR"));
   if(wifi.readLine(buffer, sizeof(buffer))) {
-    Serial.print("Response = ");
-    Serial.println(buffer);
+    printString(F("Response = "));
+    printString(buffer);
     wifi.find(); // Discard the 'OK' that follows
   } else {
-    Serial.println(F("error"));
+    printString(F("Ver: Error"));
   }
 
-  printString("Checking MAC address...");
+  printString(F("Checking MAC address..."));
   wifi.println(F("AT+CIPSTAMAC_DEF"));
   if(wifi.readLine(buffer, sizeof(buffer))) {
-    Serial.print("Response = ");
-    Serial.println(buffer);
+    printString(F("Response = "));
+    printString(buffer);
     wifi.find(); // Discard the 'OK' that follows
   } else {
-    Serial.println(F("error"));
+    printString(F("MAC: Error"));
   }
 
-  printString("Connecting to WiFi...");
+  printString(F("Connecting..."));
   if(wifi.connectToAP(F(ESP_SSID), F(ESP_PASS))) {
 
     // IP addr check isn't part of library yet, but
     // we can manually request and place in a string.
-    Serial.print(F("OK\nChecking IP addr..."));
+    printString(F("OK\nChecking IP addr..."));
     wifi.println(F("AT+CIFSR"));
     if(wifi.readLine(buffer, sizeof(buffer))) {
-      Serial.println(buffer);
+      printString(buffer);
       wifi.find(); // Discard the 'OK' that follows
 
-      Serial.print(F("Connecting to host..."));
+      printString(F("Getting Page."));
+      printString(F("Connecting to host..."));
       if(wifi.connectTCP(F(HOST), PORT)) {
-        Serial.print(F("OK\nRequesting page..."));
+        printString(F("OK\nRequesting page..."));
         if(wifi.requestURL(F(PAGE))) {
-          Serial.println("OK\nSearching for string...");
+          printString(F("OK\nSearching for string..."));
           // Search for a phrase in the open stream.
           // Must be a flash-resident string (F()).
-          if(wifi.find(F("working"), true)) {
-            Serial.println(F("found!"));
+          if(wifi.find(F("\r\n\r\n"), true)) {
+            printString(F("WORKING !!!"));
           } else {
-            Serial.print#include <LEDMatrixDriver.hpp>
-#include <Adafruit_ESP8266.h>
-#include <SoftwareSerial.h>
-
-// Links to an ESP8266
-#define ESP_RX   8
-#define ESP_TX   9
-#define ESP_RST  10
-#define LED_PIN  5
-
-#define ESP_SSID "Clearscene.Gateway.Guest" // Your network name here
-#define ESP_PASS "fieldhoverpuzzelrough" // Your network password here
-#define HOST     "www.adafruit.com"     // Host to contact
-#define PAGE     "/testwifi/index.html" // Web page to request
-#define PORT     80                     // 80 = HTTP default port
-
-// Define the ChipSelect pin for the led matrix (Dont use the SS or MISO pin of your Arduino!)
-// Other pins are arduino specific SPI pins (MOSI=DIN of the LEDMatrix and CLK) see https://www.arduino.cc/en/Reference/SPI
-const uint8_t LEDMATRIX_CS_PIN = 19;
-
-// Define LED Matrix dimensions (0-n) - eg: 32x8 = 31x7
-const int LEDMATRIX_WIDTH = 63;  
-const int LEDMATRIX_HEIGHT = 7;
-const int LEDMATRIX_SEGMENTS = 8;
-
-int x=0, y=0;   // start top left
-
-// This is the font definition. You can use http://gurgleapps.com/tools/matrix to create your own font or sprites.
-// If you like the font feel free to use it. I created it myself and donate it to the public domain.
-const byte font[93][8] = { {0,0,0,0,0,0,0,0}, // SPACE
-                     {0x10,0x18,0x18,0x18,0x18,0x00,0x18,0x18}, // EXCL
-                     {0x28,0x28,0x08,0x00,0x00,0x00,0x00,0x00}, // QUOT
-                     {0x00,0x0a,0x7f,0x14,0x28,0xfe,0x50,0x00}, // #
-                     {0x10,0x38,0x54,0x70,0x1c,0x54,0x38,0x10}, // $
-                     {0x00,0x60,0x66,0x08,0x10,0x66,0x06,0x00}, // %
-                     {0,0,0,0,0,0,0,0}, // &
-                     {0x00,0x10,0x18,0x18,0x08,0x00,0x00,0x00}, // '
-                     {0x02,0x04,0x08,0x08,0x08,0x08,0x08,0x04}, // (
-                     {0x40,0x20,0x10,0x10,0x10,0x10,0x10,0x20}, // )
-                     {0x00,0x10,0x54,0x38,0x10,0x38,0x54,0x10}, // *
-                     {0x00,0x08,0x08,0x08,0x7f,0x08,0x08,0x08}, // +
-                     {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x08}, // COMMA
-                     {0x00,0x00,0x00,0x00,0x7e,0x00,0x00,0x00}, // -
-                     {0x00,0x00,0x00,0x00,0x00,0x00,0x06,0x06}, // DOT
-                     {0x00,0x04,0x04,0x08,0x10,0x20,0x40,0x40}, // /
-                     
-                     {0x00,0x38,0x44,0x4c,0x54,0x64,0x44,0x38}, // 0
-                     {0x04,0x0c,0x14,0x24,0x04,0x04,0x04,0x04}, // 1
-                     {0x00,0x30,0x48,0x04,0x04,0x38,0x40,0x7c}, // 2
-                     {0x00,0x38,0x04,0x04,0x18,0x04,0x44,0x38}, // 3
-                     {0x00,0x04,0x0c,0x14,0x24,0x7e,0x04,0x04}, // 4
-                     {0x00,0x7c,0x40,0x40,0x78,0x04,0x04,0x38}, // 5
-                     {0x00,0x38,0x40,0x40,0x78,0x44,0x44,0x38}, // 6
-                     {0x00,0x7c,0x04,0x04,0x08,0x08,0x10,0x10}, // 7
-                     {0x00,0x3c,0x44,0x44,0x38,0x44,0x44,0x78}, // 8
-                     {0x00,0x38,0x44,0x44,0x3c,0x04,0x04,0x78}, // 9
-                     
-                     {0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x00}, // :
-                     {0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x08}, // ;
-                     {0x00,0x10,0x20,0x40,0x80,0x40,0x20,0x10}, // <
-                     {0x00,0x00,0x7e,0x00,0x00,0xfc,0x00,0x00}, // =
-                     {0x00,0x08,0x04,0x02,0x01,0x02,0x04,0x08}, // >
-                     {0x00,0x38,0x44,0x04,0x08,0x10,0x00,0x10}, // ?
-                     {0x00,0x30,0x48,0xba,0xba,0x84,0x78,0x00}, // @
-                     
-                     {0x00,0x1c,0x22,0x42,0x42,0x7e,0x42,0x42}, // A
-                     {0x00,0x78,0x44,0x44,0x78,0x44,0x44,0x7c}, // B
-                     {0x00,0x3c,0x44,0x40,0x40,0x40,0x44,0x7c}, // C
-                     {0x00,0x7c,0x42,0x42,0x42,0x42,0x44,0x78}, // D
-                     {0x00,0x78,0x40,0x40,0x70,0x40,0x40,0x7c}, // E
-                     {0x00,0x7c,0x40,0x40,0x78,0x40,0x40,0x40}, // F
-                     {0x00,0x3c,0x40,0x40,0x5c,0x44,0x44,0x78}, // G
-                     {0x00,0x42,0x42,0x42,0x7e,0x42,0x42,0x42}, // H
-                     {0x00,0x7c,0x10,0x10,0x10,0x10,0x10,0x7e}, // I
-                     {0x00,0x7e,0x02,0x02,0x02,0x02,0x04,0x38}, // J
-                     {0x00,0x44,0x48,0x50,0x60,0x50,0x48,0x44}, // K
-                     {0x00,0x40,0x40,0x40,0x40,0x40,0x40,0x7c}, // L
-                     {0x00,0x82,0xc6,0xaa,0x92,0x82,0x82,0x82}, // M
-                     {0x00,0x42,0x42,0x62,0x52,0x4a,0x46,0x42}, // N
-                     {0x00,0x3c,0x42,0x42,0x42,0x42,0x44,0x38}, // O
-                     {0x00,0x78,0x44,0x44,0x48,0x70,0x40,0x40}, // P
-                     {0x00,0x3c,0x42,0x42,0x52,0x4a,0x44,0x3a}, // Q
-                     {0x00,0x78,0x44,0x44,0x78,0x50,0x48,0x44}, // R
-                     {0x00,0x38,0x40,0x40,0x38,0x04,0x04,0x78}, // S
-                     {0x00,0x7e,0x90,0x10,0x10,0x10,0x10,0x10}, // T
-                     {0x00,0x42,0x42,0x42,0x42,0x42,0x42,0x3e}, // U
-                     {0x00,0x42,0x42,0x42,0x42,0x44,0x28,0x10}, // V
-                     {0x80,0x82,0x82,0x92,0x92,0x92,0x94,0x78}, // W
-                     {0x00,0x42,0x42,0x24,0x18,0x24,0x42,0x42}, // X
-                     {0x00,0x44,0x44,0x28,0x10,0x10,0x10,0x10}, // Y
-                     {0x00,0x7c,0x04,0x08,0x7c,0x20,0x40,0xfe}, // Z
-
-                     {0x00,0x7e,0x40,0x40,0x40,0x40,0x40,0x7e}, // [
-                     {0x00,0x40,0x40,0x20,0x10,0x08,0x04,0x04}, // \
-                     {0x00,0x78,0x02,0x02,0x02,0x02,0x02,0x7c}, // ]
-                     {0x00,0x7c,0x42,0x00,0x00,0x00,0x00,0x00}, // ^
-                     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xfe}, // _
-                     {0x00,0x30,0x48,0xba,0xba,0x84,0x78,0x00}, // @
-                     {0x00,0x30,0x48,0xba,0xba,0x84,0x78,0x00}, // @
-                     
-                     {0x00,0x00,0x00,0x3c,0x06,0x3e,0x66,0x3e}, // a
-                     {0x00,0x60,0x60,0x60,0x7c,0x66,0x66,0x7c}, // b
-                     {0x00,0x00,0x00,0x3c,0x66,0x60,0x66,0x3c}, // c
-                     {0x00,0x06,0x06,0x06,0x3e,0x66,0x66,0x3e}, // d
-                     {0x00,0x00,0x00,0x3c,0x66,0x7e,0x60,0x3c}, // e
-                     {0x00,0x1c,0x36,0x30,0x30,0x7c,0x30,0x30}, // f
-                     {0x00,0x00,0x3e,0x66,0x66,0x3e,0x06,0x3c}, // g
-                     {0x00,0x60,0x60,0x60,0x7c,0x66,0x66,0x66}, // h
-                     {0x00,0x00,0x18,0x00,0x38,0x18,0x18,0x3c}, // i
-                     {0x00,0x0c,0x00,0x0c,0x0c,0x6c,0x6c,0x38}, // j
-                     {0x00,0x60,0x60,0x66,0x6c,0x78,0x6c,0x66}, // k
-                     {0x00,0x18,0x18,0x18,0x18,0x18,0x18,0x18}, // l
-                     {0x00,0x00,0x00,0x63,0x77,0x7f,0x6b,0x6b}, // m
-                     {0x00,0x00,0x00,0x7c,0x7e,0x66,0x66,0x66}, // n
-                     {0x00,0x00,0x00,0x3c,0x66,0x66,0x66,0x3c}, // o
-                     {0x00,0x00,0x7c,0x66,0x66,0x7c,0x60,0x60}, // p
-                     {0x00,0x00,0x3c,0x6c,0x6c,0x3c,0x0d,0x0f}, // q
-                     {0x00,0x00,0x00,0x7c,0x66,0x66,0x60,0x60}, // r
-                     {0x00,0x00,0x00,0x3e,0x40,0x3c,0x02,0x7c}, // s
-                     {0x00,0x00,0x18,0x18,0x7e,0x18,0x18,0x18}, // t                     
-                     {0x00,0x00,0x00,0x66,0x66,0x66,0x66,0x3e}, // u
-                     {0x00,0x00,0x00,0x66,0x66,0x66,0x3c,0x18}, // v                     
-                     {0x00,0x00,0x00,0x63,0x6b,0x6b,0x6b,0x3e}, // w                     
-                     {0x00,0x00,0x00,0x66,0x3c,0x18,0x3c,0x66}, // x                     
-                     {0x00,0x00,0x00,0x66,0x66,0x3e,0x06,0x3c}, // y                     
-                     {0x00,0x00,0x00,0x3c,0x0c,0x18,0x30,0x3c}, // z
-                      // (the font does not contain any lower case letters. you can add your own.)
-                  };    // {}, // 
-
-// Marquee speed
-const int ANIM_DELAY = 25;
-
-// Marquee text 
-char text[] = "The Quick Brown Fox Jumped Over The Lazy Dog!";
-int len = strlen(text);
-
-
-LEDMatrixDriver lmd(LEDMATRIX_SEGMENTS, LEDMATRIX_CS_PIN);
-SoftwareSerial softser(ESP_RX, ESP_TX);
-Adafruit_ESP8266 wifi(&softser, &Serial, ESP_RST);
-
-char buffer[50];
-
-void setup() {
-  // init the display
-  lmd.setEnabled(true);
-  lmd.setIntensity(5);   // 0 = low, 10 = high
-
-  printString("Starting");
-  
-  // Flash LED on power-up
-  pinMode(LED_PIN, OUTPUT);
-  for(uint8_t i=0; i<3; i++) {
-    digitalWrite(LED_PIN, HIGH); delay(50);
-    digitalWrite(LED_PIN, LOW);  delay(100);
-  }
-    
-  wifi.setBootMarker(F("Version:0.9.2.4]\r\n\r\nready"));
-
-  softser.begin(9600); // Soft serial connection to ESP8266
-  Serial.begin(115200); while(!Serial); // UART serial debug
-
-  printString("ESP8266...");
-    
-  // Test if module is ready
-  printString("Hard reset");
-  if(!wifi.hardReset()) {
-    printString("no response from module.");
-    for(;;);
-  }
-
-  printString("Soft reset");
-  if(!wifi.softReset()) {
-    printString("no response from module.");
-    for(;;);
-  }
-
-  printString("Set Baud");
-  wifi.println(F("AT+UART_DEF=9600,8,1,0,0"));
-  if(wifi.readLine(buffer, sizeof(buffer))) {
-    Serial.print("Response = ");
-    Serial.println(buffer);
-    wifi.find(); // Discard the 'OK' that follows
-  } else {
-    Serial.print("error");
-  }
-  
-  printString("Checking firmware version...");
-  wifi.println(F("AT+GMR"));
-  if(wifi.readLine(buffer, sizeof(buffer))) {
-    Serial.print("Response = ");
-    Serial.println(buffer);
-    wifi.find(); // Discard the 'OK' that follows
-  } else {
-    Serial.println(F("error"));
-  }
-
-  printString("Checking MAC address...");
-  wifi.println(F("AT+CIPSTAMAC_DEF"));
-  if(wifi.readLine(buffer, sizeof(buffer))) {
-    Serial.print("Response = ");
-    Serial.println(buffer);
-    wifi.find(); // Discard the 'OK' that follows
-  } else {
-    Serial.println(F("error"));
-  }
-
-  printString("Connecting to WiFi...");
-  if(wifi.connectToAP(F(ESP_SSID), F(ESP_PASS))) {
-
-    // IP addr check isn't part of library yet, but
-    // we can manually request and place in a string.
-    Serial.print(F("OK\nChecking IP addr..."));
-    wifi.println(F("AT+CIFSR"));
-    if(wifi.readLine(buffer, sizeof(buffer))) {
-      Serial.println(buffer);
-      wifi.find(); // Discard the 'OK' that follows
-
-      Serial.print(F("Connecting to host..."));
-      if(wifi.connectTCP(F(HOST), PORT)) {
-        Serial.print(F("OK\nRequesting page..."));
-        if(wifi.requestURL(F(PAGE))) {
-          Serial.println("OK\nSearching for string...");
-          // Search for a phrase in the open stream.
-          // Must be a flash-resident string (F()).
-          if(wifi.find(F("working"), true)) {
-            Serial.println(F("found!"));
-          } else {
-            Serial.println(F("not found."));
+            printString(F("Incorrect response"));
           }
         } else { // URL request failed
-          Serial.println(F("error"));
+          printString(F("Page fetch fail"));
         }
         wifi.closeTCP();
       } else { // TCP connect failed
-        Serial.println(F("D'oh!"));
+        printString(F("Connection Failed"));
       }
     } else { // IP addr check failed
-      Serial.println(F("error"));
+      printString(F("No IP address"));
     }
     wifi.closeAP();
   } else { // WiFi connection failed
-    Serial.println(F("FAIL"));
+    printString(F("WIFI Failure"));
   }
-  
+
 }
+
+bool g_bPrevCarrierState;
+uint8_t g_iPrevBitCount;
 
 void loop() {
 
+  char *msg[] = { "Ambulance", "Emergency", "----------------", };
+  static uint8_t cycle = 0;
 
-  
- // Draw the text to the current position
- drawString(text, len, x, 0);
-   // In case you wonder why we don't have to call lmd.clear() in every loop: The font has a opaque (black) background...
- 
- // Toggle display of the new framebuffer
- lmd.display();
-
- // Wait to let the human read the display
- delay(ANIM_DELAY);
-
- // Advance to next coordinate
- if( --x < len * -8 )
-   x = LEDMATRIX_WIDTH;
-}
-
-
-/**
- * This function draws a string of the given length to the given position.
- */
-void drawString(char* text, int len, int x, int y )
-{
-  for( int idx = 0; idx < len; idx ++ )
+  bool bCarrierState = MSF.getHasCarrier();
+  uint8_t iBitCount = MSF.getBitCount();
+  if ((bCarrierState != g_bPrevCarrierState) || (bCarrierState == true && iBitCount != g_iPrevBitCount))
   {
-    int c = text[idx] - 32;
-
-    // stop if char is outside visible area
-    if( x + idx * 8  > LEDMATRIX_WIDTH )
-      return;
-
-    // only draw if char is visible
-    if( 8 + x + idx * 8 > 0 )
-      drawSprite( font[c], x + idx * 8, y, 8, 8 );
+    sprintf(buffer, "%02d", iBitCount);
+    printString(buffer);
   }
+  g_bPrevCarrierState = bCarrierState;
+  g_iPrevBitCount = iBitCount;
+    
+  if( MSF.m_bHasValidTime ) {
+    digitalWrite(4, HIGH);
+    sprintf(buffer, "%02d:%02d", MSF.m_iHour, MSF.m_iMinute);
+    printString(buffer);
+    msg[2] = buffer;
+    MSF.m_bHasValidTime = false;
+  }
+
+  if ( P.displayAnimate() ) {
+    // set up the string
+    P.displayText(msg[cycle], PA_CENTER, SCROLL_SPEED, PAUSE_TIME, PA_GROW_UP, PA_RANDOM);
+
+    // prepare for next pass
+    cycle = (cycle + 1) % ARRAY_SIZE(msg);
+  }
+
 }
 
-void printString( const char* text ) {
+void printString( const __FlashStringHelper * text ) {
+#ifdef PAROLAOUT
+  P.displayText(text, PA_CENTER, SCROLL_SPEED, PAUSE_TIME, PA_OPENING, PA_GROW_UP);
+  while ( ! P.displayAnimate() ) { }
+#else
   Serial.println(text);
-  int len = strlen(text);
-  int x = 1;
-  int y = 0;
-  lmd.clear();
-  for( int idx = 0; idx < len; idx ++ )
-  {
-    int c = text[idx] - 32;
-
-    // stop if char is outside visible area
-    if( x + idx * 8  > LEDMATRIX_WIDTH )
-      break;
-
-    // only draw if char is visible
-    if( 8 + x + idx * 8 > 0 )
-      drawSprite( font[c], x + idx * 8, y, 8, 8 );
-  }
-  lmd.display();
-  delay(1000);
+#endif
 }
 
-/**
- * This draws a sprite to the given position using the width and height supplied (usually 8x8)
- */
-void drawSprite( const byte* sprite, int x, int y, int width, int height )
-{
-  // The mask is used to get the column bit from the sprite row
-  byte mask = B10000000;
-  
-  for( int iy = 0; iy < height; iy++ )
-  {
-    for( int ix = 0; ix < width; ix++ )
-    {
-      lmd.setPixel(x + ix, y + iy, (bool)(sprite[iy] & mask ));
-
-      // shift the mask by one pixel to the right
-      mask = mask >> 1;
-    }
-
-    // reset column mask
-    mask = B10000000;
-  }
-}ln(F("not found."));
-          }
-        } else { // URL request failed
-          Serial.println(F("error"));
-        }
-        wifi.closeTCP();
-      } else { // TCP connect failed
-        Serial.println(F("D'oh!"));
-      }
-    } else { // IP addr check failed
-      Serial.println(F("error"));
-    }
-    wifi.closeAP();
-  } else { // WiFi connection failed
-    Serial.println(F("FAIL"));
-  }
-  
-}
-
-void loop() {
-
-
-  
- // Draw the text to the current position
- drawString(text, len, x, 0);
-   // In case you wonder why we don't have to call lmd.clear() in every loop: The font has a opaque (black) background...
- 
- // Toggle display of the new framebuffer
- lmd.display();
-
- // Wait to let the human read the display
- delay(ANIM_DELAY);
-
- // Advance to next coordinate
- if( --x < len * -8 )
-   x = LEDMATRIX_WIDTH;
-}
-
-
-/**
- * This function draws a string of the given length to the given position.
- */
-void drawString(char* text, int len, int x, int y )
-{
-  for( int idx = 0; idx < len; idx ++ )
-  {
-    int c = text[idx] - 32;
-
-    // stop if char is outside visible area
-    if( x + idx * 8  > LEDMATRIX_WIDTH )
-      return;
-
-    // only draw if char is visible
-    if( 8 + x + idx * 8 > 0 )
-      drawSprite( font[c], x + idx * 8, y, 8, 8 );
-  }
-}
-
-void printString( const char* text ) {
+void printString( char * text ) {
+#ifdef PAROLAOUT
+  P.displayText(text, PA_CENTER, SCROLL_SPEED, PAUSE_TIME, PA_OPENING, PA_GROW_UP);
+  while ( ! P.displayAnimate() ) { }
+#else
   Serial.println(text);
-  int len = strlen(text);
-  int x = 1;
-  int y = 0;
-  lmd.clear();
-  for( int idx = 0; idx < len; idx ++ )
-  {
-    int c = text[idx] - 32;
-
-    // stop if char is outside visible area
-    if( x + idx * 8  > LEDMATRIX_WIDTH )
-      break;
-
-    // only draw if char is visible
-    if( 8 + x + idx * 8 > 0 )
-      drawSprite( font[c], x + idx * 8, y, 8, 8 );
-  }
-  lmd.display();
-  delay(1000);
-}
-
-/**
- * This draws a sprite to the given position using the width and height supplied (usually 8x8)
- */
-void drawSprite( const byte* sprite, int x, int y, int width, int height )
-{
-  // The mask is used to get the column bit from the sprite row
-  byte mask = B10000000;
-  
-  for( int iy = 0; iy < height; iy++ )
-  {
-    for( int ix = 0; ix < width; ix++ )
-    {
-      lmd.setPixel(x + ix, y + iy, (bool)(sprite[iy] & mask ));
-
-      // shift the mask by one pixel to the right
-      mask = mask >> 1;
-    }
-
-    // reset column mask
-    mask = B10000000;
-  }
+#endif
 }
