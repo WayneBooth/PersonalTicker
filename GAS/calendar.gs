@@ -14,11 +14,11 @@ function getCalendarEvents(result, calendar, maxItems, format) {
   var calendarId;
   if( calendar == 'countdown' ) {
     result.push( blockStart, 'Looking Forward To');
-    calendarId = 'q68tiidhll1edg62lssbmc2lq8@group.calendar.google.com';
+    calendarId = COUNTDOWN;
   }
   else {
     result.push( blockStart, 'Family Calendar Events');
-    calendarId = 'family07783842730088701806@group.calendar.google.com';
+    calendarId = FAMILY;
   }
 
   var fromDate = new Date();
