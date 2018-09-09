@@ -1,206 +1,331 @@
-//define PAROLAOUT 1
-
-#ifdef PAROLAOUT
+    
+/* ----------------------------------- */
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
-#endif
-
-#include <Adafruit_ESP8266.h>
-#include <SoftwareSerial.h>
-
-#include <MSFDecoder.h>
-
-#ifdef PAROLAOUT
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
-#define MAX_DEVICES 8
-#define PAUSE_TIME 500
-#define SCROLL_SPEED 5
-#define CS_PIN 14
-
+#define MAX_DEVICES 12
+#define PAUSE_TIME 800
+#define SCROLL_SPEED 20
+#define CS_PIN 22
 MD_Parola P = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
-#endif
 
-// Links to an ESP8266
-#define ESP_RX   8
-#define ESP_TX   9
-#define ESP_RST  10
-
+/* ----------------------------------- */
+#include <WiFiClientSecure.h>
 #include "secrets.h"
-#define HOST     "script.google.com"     // Host to contact
-#define PAGE     "/macros/s/AKfycbxpb_mqMl1YqnP54bmL-ABGb5cRC4Dab6b2a0Hz41GCgoaipR8O/exec" // Web page to request
-#define PORT     80                     // 80 = HTTP default port
+const char* host = "script.google.com";
 
-#define DATA   {"data":[{"Current Date":{"start":"swipe","transition":"drop","entries":[{"entry":"Sat Aug 25 2018"}]}},{"Time Data Collected":{"start":"swipe","transition":"drop","entries":[{"entry":"22:57:13 GMT+0100 (BST)"}]}},{"Family Calendar Events":{"start":"swipe","transition":"drop","entries":[{"entry":"Some holiday"},{"entry":"other event"},{"entry":"more stuff"}]}},{"Current Time":{"start":"swipe","transition":"drop","entries":[{"function":"getCurrentTime()"}]}},{"UK News":{"start":"swipe","transition":"drop","entries":[{"entry":"Papal visit: Pope shamed by Church's abuse failures : On a historic visit to Ireland, Pope Francis reportedly condemns abuse in the Church as \"filth\"."},{"entry":"Abuse scandal is 'source of pain' : Pope Francis and Taoiseach Leo Varadkar addressed the child sex abuse scandal in the Catholic church."},{"entry":"Egypt hotel deaths: 'No toxic gas in UK couple's room' : British holidaymakers have been flown home from a hotel in Egypt where a couple died."},{"entry":"Lindsay Kemp, performer and Bowie mentor, dies at 80 : He mentored David Bowie and taught dance to Kate Bush, who calls him a \"truly original and great artist\"."}]}},{"Current Time":{"start":"swipe","transition":"drop","entries":[{"function":"getCurrentTime()"}]}},{"Kirkcaldy Weather":{"start":"swipe","transition":"drop","entries":[{"entry":"Saturday: Partly Cloudy, Minimum Temperature: 6°C (42°F) : Minimum Temperature: 6°C (42°F), Wind Direction: South Westerly, Wind Speed: 11mph, Visibility: Very Good, Pressure: 1012mb, Humidity: 71%, UV Risk: 3, Pollution: Low, Sunset: 20:26 BST"},{"entry":"Sunday: Light Rain Showers, Minimum Temperature: 9°C (48°F) Maximum Temperature: 13°C (55°F) : Maximum Temperature: 13°C (55°F), Minimum Temperature: 9°C (48°F), Wind Direction: South Easterly, Wind Speed: 12mph, Visibility: Good, Pressure: 1003mb, Humidity: 91%, UV Risk: 1, Pollution: Low, Sunrise: 06:04 BST, Sunset: 20:24 BST"}]}},{"Current Time":{"start":"swipe","transition":"drop","entries":[{"function":"getCurrentTime()"}]}},{"Gold Price":{"start":"swipe","transition":"drop","entries":"£938.64"}}]}'
-
-SoftwareSerial softser(ESP_RX, ESP_TX);
-#ifndef PAROLAOUT
-Adafruit_ESP8266 wifi(&softser, &Serial, ESP_RST);
-#else
-Adafruit_ESP8266 wifi(&softser, NULL, ESP_RST);
-#endif
-
+/* ----------------------------------- */
+#include <MSFDecoder.h>
+#define MSF_PIN 21
 MSFDecoder MSF;
 
-char buffer[50];
+/* ----------------------------------- */
+#define LOCALDEBUG 0
+#define WEBDATASIZE 100
+char * databuffer[WEBDATASIZE];
+char currentTime[6] = "--:--";
 
-void setup() {
 
-  pinMode(4, OUTPUT);
-  digitalWrite(4, HIGH);
-  
-  wifi.setBootMarker(F("Version:0.9.2.4]\r\n\r\nready"));
-
-  softser.begin(9600); // Soft serial connection to ESP8266
-#ifndef PAROLAOUT
-  Serial.begin(115200); while(!Serial); // UART serial debug
-#else
+void setup()
+{
   P.begin();
-#endif
+  printString("Starting...");
 
-  MSF.init();
-  printString(DATA);
-  printString(F("Starting..."));
-
+  MSF.init( MSF_PIN );
   while( ! MSF.getHasCarrier() ) {}
   printString(F("Carrier Found"));
+  
+  Serial.begin(115200);
+  delay(10);
 
-  digitalWrite(4, LOW);
+  // We start by connecting to a WiFi network
 
-  printString(F("Init ESP8266"));
- 
-  printString(F("Hard Reset"));
-  if(!wifi.hardReset()) {
-    printString(F("Error on hard reset."));
-    for(;;);
+  debugPrint(F(""));
+  debugPrint(F(""));
+  debugPrint(F("Connecting to "));
+  debugPrint(ssid);
+
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
   }
 
-  printString(F("Soft Reset"));
-  if(!wifi.softReset()) {
-    printString(F("Error on soft reset."));
-    for(;;);
+  debugPrint(F(""));
+  debugPrint(F("WiFi connected"));
+  debugPrint(F("IP address: "));
+  debugPrint((String)WiFi.localIP());
+
+  printString(currentTime);
+}
+
+void loop()
+{
+  static int pageFetchCounter = 1;
+  
+  if( --pageFetchCounter <= 0 ) {
+    printString(F("Collecting Data"));
+    getPage( host, url );
+    pageFetchCounter = 4;
   }
 
-  printString(F("Set Baud"));
-  wifi.println(F("AT+UART_DEF=9600,8,1,0,0"));
-  if(wifi.readLine(buffer, sizeof(buffer))) {
-    printString(F("Response = "));
-    printString(buffer);
-    wifi.find(); // Discard the 'OK' that follows
-  } else {
-    printString(F("Baud: Error"));
-  }
+  Serial.println("Decoding data");
+  for ( int a = 0 ; a < WEBDATASIZE ; a=a+2 ) {
 
-  printString(F("Checking firmware version..."));
-  wifi.println(F("AT+GMR"));
-  if(wifi.readLine(buffer, sizeof(buffer))) {
-    printString(F("Response = "));
-    printString(buffer);
-    wifi.find(); // Discard the 'OK' that follows
-  } else {
-    printString(F("Ver: Error"));
-  }
-
-  printString(F("Checking MAC address..."));
-  wifi.println(F("AT+CIPSTAMAC_DEF"));
-  if(wifi.readLine(buffer, sizeof(buffer))) {
-    printString(F("Response = "));
-    printString(buffer);
-    wifi.find(); // Discard the 'OK' that follows
-  } else {
-    printString(F("MAC: Error"));
-  }
-
-  printString(F("Connecting..."));
-  if(wifi.connectToAP(F(ESP_SSID), F(ESP_PASS))) {
-
-    // IP addr check isn't part of library yet, but
-    // we can manually request and place in a string.
-    printString(F("OK\nChecking IP addr..."));
-    wifi.println(F("AT+CIFSR"));
-    if(wifi.readLine(buffer, sizeof(buffer))) {
-      printString(buffer);
-      wifi.find(); // Discard the 'OK' that follows
-
-      printString(F("Getting Page."));
-      printString(F("Connecting to host..."));
-      if(wifi.connectTCP(F(HOST), PORT)) {
-        printString(F("OK\nRequesting page..."));
-        if(wifi.requestURL(F(PAGE))) {
-          printString(F("OK\nSearching for string..."));
-          // Search for a phrase in the open stream.
-          // Must be a flash-resident string (F()).
-          if(wifi.find(F("\r\n\r\n"), true)) {
-            printString(F("WORKING !!!"));
-          } else {
-            printString(F("Incorrect response"));
-          }
-        } else { // URL request failed
-          printString(F("Page fetch fail"));
-        }
-        wifi.closeTCP();
-      } else { // TCP connect failed
-        printString(F("Connection Failed"));
-      }
-    } else { // IP addr check failed
-      printString(F("No IP address"));
+    if( MSF.m_bHasValidTime ) {
+      debugPrint(F("HAS VALID TIME"));
+      sprintf(currentTime, "%02d:%02d", MSF.m_iHour, MSF.m_iMinute);
+      MSF.m_bHasValidTime = false;
     }
-    wifi.closeAP();
-  } else { // WiFi connection failed
-    printString(F("WIFI Failure"));
-  }
-
-}
-
-bool g_bPrevCarrierState;
-uint8_t g_iPrevBitCount;
-
-void loop() {
-
-  char *msg[] = { "Ambulance", "Emergency", "----------------", };
-  static uint8_t cycle = 0;
-
-  bool bCarrierState = MSF.getHasCarrier();
-  uint8_t iBitCount = MSF.getBitCount();
-  if ((bCarrierState != g_bPrevCarrierState) || (bCarrierState == true && iBitCount != g_iPrevBitCount))
-  {
-    sprintf(buffer, "%02d", iBitCount);
-    printString(buffer);
-  }
-  g_bPrevCarrierState = bCarrierState;
-  g_iPrevBitCount = iBitCount;
+  
+    debugPrint(F("Parsing format : "));
+    debugPrint((String)a);
+    debugPrint(databuffer[a]);
     
-  if( MSF.m_bHasValidTime ) {
-    digitalWrite(4, HIGH);
-    sprintf(buffer, "%02d:%02d", MSF.m_iHour, MSF.m_iMinute);
-    printString(buffer);
-    msg[2] = buffer;
-    MSF.m_bHasValidTime = false;
-  }
+    textEffect_t effect = PA_SCROLL_LEFT;
+    if( strcmp(databuffer[a], "@@@drop") == 0 ) {
+      effect = PA_OPENING_CURSOR;
+      debugPrint(F("It's a DROP"));
+    }
+    else if( strcmp(databuffer[a], "@@@scroll") == 0 ) {
+      effect = PA_SCROLL_LEFT;
+      debugPrint(F("It's a SCROLL"));
+    }
 
-  if ( P.displayAnimate() ) {
-    // set up the string
-    P.displayText(msg[cycle], PA_CENTER, SCROLL_SPEED, PAUSE_TIME, PA_GROW_UP, PA_RANDOM);
+    debugPrint(F("Parsing line : "));
+    debugPrint((String)a);
+    debugPrint(databuffer[a+1]);
+    
+    if( databuffer[a+1][0] == '#' ) {
+      debugPrint(F("Current Time"));
+      printString( currentTime, effect, effect );
+    }
+    else {
+      debugPrint(F("Direct Data"));
+      printString( databuffer[a+1], effect, effect );
+    }
 
-    // prepare for next pass
-    cycle = (cycle + 1) % ARRAY_SIZE(msg);
+    if( pageFetchCounter == 1 ) {
+      free( databuffer[a] );
+      free( databuffer[a+1] );
+    }
+    
   }
 
 }
 
-void printString( const __FlashStringHelper * text ) {
-#ifdef PAROLAOUT
-  P.displayText(text, PA_CENTER, SCROLL_SPEED, PAUSE_TIME, PA_OPENING, PA_GROW_UP);
-  while ( ! P.displayAnimate() ) { }
-#else
-  Serial.println(text);
+void debugPrint( String text ) {
+  int x = 0;
+#if LOCALDEBUG
+  Serial.println( text );
+#endif
+}
+
+void debugPrint( char * text ) {
+  int x = 0;
+#if LOCALDEBUG
+  Serial.println( text );
 #endif
 }
 
 void printString( char * text ) {
-#ifdef PAROLAOUT
-  P.displayText(text, PA_CENTER, SCROLL_SPEED, PAUSE_TIME, PA_OPENING, PA_GROW_UP);
-  while ( ! P.displayAnimate() ) { }
-#else
-  Serial.println(text);
-#endif
+  printString( text, PA_OPENING, PA_NO_EFFECT );
 }
+
+void printString( char * text, textEffect_t start, textEffect_t stop ) {
+  P.displayText(text, PA_CENTER, SCROLL_SPEED, PAUSE_TIME, start, stop);
+  while ( ! P.displayAnimate() ) { }
+}
+
+void printString( String text ) {
+  char * s = (char *)malloc( sizeof(char) * (text.length()+1) );
+  text.toCharArray(s, (text.length()+1) );
+  P.displayText(s, PA_CENTER, SCROLL_SPEED, PAUSE_TIME, PA_SCROLL_LEFT, PA_NO_EFFECT);
+  while ( ! P.displayAnimate() ) { }
+  free(s);
+}
+
+char * getHost( String header) {
+  String host = header.substring( 0, header.indexOf("/") );
+  char * s = (char *)malloc( sizeof(char) * (host.length()+1) );
+  host.toCharArray(s, (host.length()+1) );
+  return s;
+}
+
+char * getUrl( String header) {
+  String url = header.substring( header.indexOf("/") );
+  char * s = (char *)malloc( sizeof(char) * (url.length()+1) );
+  url.toCharArray(s, (url.length()+1) );
+  return s;
+}
+
+void getPage( const char * host, const char * url ) {
+
+    int counter = 0;
+    debugPrint(F("connecting to "));
+    debugPrint(host);
+
+    // Use WiFiClient class to create TCP connections
+    WiFiClientSecure client;
+    const int httpPort = 443;
+
+    if (!client.connect(host, httpPort)) {
+        debugPrint(F("connection failed"));
+    }
+
+    debugPrint(F("Requesting URL: "));
+    debugPrint(String("GET ") + url + " HTTP/1.1");
+
+    // This will send the request to the server
+    client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+                 "Host: " + host + "\r\n\r\n" );
+
+    unsigned long timeout = millis();
+
+    // Wait for response
+    while (client.available() == 0) {
+        if (millis() - timeout > 15000) {
+            debugPrint(F(">>> Client Timeout !"));
+            client.stop();
+        }
+    }
+
+    // Read Headers
+    bool lookForNewLocation = false;
+    String header;
+    while(client.available()) {
+      header = client.readStringUntil('\n');
+      if( header.startsWith("HTTP/1.1 302" ) ) {
+        lookForNewLocation = true;
+      }
+      Serial.println(header);
+      if( lookForNewLocation && header.startsWith("Location: " ) ) {
+        break;
+      }
+      if (header == "\r") {
+        debugPrint(F("headers received"));
+        break;
+      }
+    }
+
+    if( lookForNewLocation ) {
+      header = header.substring( 18 );
+      // Read off the remainder
+      debugPrint(F("Reading off remainder"));
+      while (client.available()) { client.readStringUntil('\n'); }
+      debugPrint(F("Parsing new location"));
+      //client.close();
+      char * host1 = getHost(header);
+      char * url1 = getUrl(header);
+      debugPrint(F("Redirecting to " ));
+      debugPrint(host1);
+      debugPrint(url1);
+      debugPrint(F(""));
+      getPage( host1, url1 );
+      free(host1);
+      free(url1);
+    }
+    else {
+      client.readStringUntil('\n');
+      // if there are incoming bytes available
+      // from the server, read them and print them:
+      String data = "";
+      while (client.available()) {
+        String s = client.readStringUntil('\n');
+        debugPrint(F("Read Line : "));
+        debugPrint(s);
+        char * b = (char *)malloc( sizeof(char) * (s.length()+1) );
+        s.toCharArray(b, (s.length()+1) );
+        utf8Ascii(b);
+
+        replaceAll(b, 176, 247);
+        replaceAll(b, 163, 156);
+        
+        debugPrint(b);
+        databuffer[counter++] = b;
+      }
+      debugPrint(F("Got Body Data"));
+    }
+    
+    debugPrint(F(""));
+    debugPrint(F("closing connection"));
+  
+}
+
+void replaceAll(char * str, char oldChar, char newChar)
+{
+    int i = 0;
+
+    /* Run till end of string */
+    while(str[i] != '\0')
+    {
+        /* If occurrence of character is found */
+        if(str[i] == oldChar)
+        {
+            str[i] = newChar;
+        }
+
+        i++;
+    }
+}
+
+uint8_t utf8Ascii(uint8_t ascii)
+// Convert a single Character from UTF8 to Extended ASCII according to ISO 8859-1,
+// also called ISO Latin-1. Codes 128-159 contain the Microsoft Windows Latin-1
+// extended characters:
+// - codes 0..127 are identical in ASCII and UTF-8
+// - codes 160..191 in ISO-8859-1 and Windows-1252 are two-byte characters in UTF-8
+//                 + 0xC2 then second byte identical to the extended ASCII code.
+// - codes 192..255 in ISO-8859-1 and Windows-1252 are two-byte characters in UTF-8
+//                 + 0xC3 then second byte differs only in the first two bits to extended ASCII code.
+// - codes 128..159 in Windows-1252 are different, but usually only the €-symbol will be needed from this range.
+//                 + The euro symbol is 0x80 in Windows-1252, 0xa4 in ISO-8859-15, and 0xe2 0x82 0xac in UTF-8.
+//
+// Modified from original code at http://playground.arduino.cc/Main/Utf8ascii
+// Extended ASCII encoding should match the characters at http://www.ascii-code.com/
+//
+// Return "0" if a byte has to be ignored.
+{
+  static uint8_t cPrev;
+  uint8_t c = '\0';
+
+  if (ascii < 0x7f)   // Standard ASCII-set 0..0x7F, no conversion
+  {
+    cPrev = '\0';
+    c = ascii;
+  }
+  else
+  {
+    switch (cPrev)  // Conversion depending on preceding UTF8-character
+    {
+    case 0xC2: c = ascii;  break;
+    case 0xC3: c = ascii | 0xC0;  break;
+    case 0x82: if (ascii==0xAC) c = 0x80; // Euro symbol special case
+    }
+    cPrev = ascii;   // save last char
+  }
+
+  //PRINTX("\nConverted 0x", ascii);
+  //PRINTX(" to 0x", c);
+
+  return(c);
+}
+
+void utf8Ascii(char* s)
+// In place conversion UTF-8 string to Extended ASCII
+// The extended ASCII string is always shorter.
+{
+  uint8_t c, k = 0;
+  char *cp = s;
+
+  //PRINT("\nConverting: ", s);
+
+  while (*s != '\0')
+  {
+    c = utf8Ascii(*s++);
+    if (c != '\0')
+      *cp++ = c;
+  }
+  *cp = '\0';   // terminate the new string
+}
+
