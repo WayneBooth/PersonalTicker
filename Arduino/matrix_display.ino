@@ -6,11 +6,13 @@
 #define MAX_DEVICES 12
 #define PAUSE_TIME 800
 #define SCROLL_SPEED 20
-#define CS_PIN 22
+#define CS_PIN PA4
 MD_Parola P = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 
 /* ----------------------------------- */
-#include <WiFiClientSecure.h>
+
+#define _ESPLOGLEVEL_ 3
+#include "WiFiEsp.h"
 #include "secrets.h"
 const char* host = "script.google.com";
 
@@ -20,8 +22,8 @@ const char* host = "script.google.com";
 MSFDecoder MSF;
 
 /* ----------------------------------- */
-#define LOCALDEBUG 0
-#define WEBDATASIZE 100
+#define LOCALDEBUG 1
+#define WEBDATASIZE 96
 char * databuffer[WEBDATASIZE];
 char currentTime[6] = "--:--";
 
@@ -39,15 +41,17 @@ void setup()
   delay(10);
 
   // We start by connecting to a WiFi network
-
   debugPrint(F(""));
-  debugPrint(F(""));
-  debugPrint(F("Connecting to "));
-  debugPrint(ssid);
+  debugPrint(F("Connecting to WIFI"));
+  debugPrint( ESP_SSID );
 
-  WiFi.begin(ssid, password);
+  // initialize serial for ESP module
+  Serial1.begin(9600);
+  WiFi.init(&Serial1);
+  WiFi.begin( ESP_SSID, ESP_PASS );
 
   while (WiFi.status() != WL_CONNECTED) {
+    debugPrint(F("WiFi connecting..."));
     delay(500);
   }
 
@@ -65,7 +69,7 @@ void loop()
   
   if( --pageFetchCounter <= 0 ) {
     printString(F("Collecting Data"));
-    getPage( host, url );
+    getPage( host, PAGE );
     pageFetchCounter = 4;
   }
 
@@ -124,6 +128,7 @@ void debugPrint( String text ) {
 void debugPrint( char * text ) {
   int x = 0;
 #if LOCALDEBUG
+  Serial.println( freeRam() );
   Serial.println( text );
 #endif
 }
@@ -166,10 +171,10 @@ void getPage( const char * host, const char * url ) {
     debugPrint(host);
 
     // Use WiFiClient class to create TCP connections
-    WiFiClientSecure client;
+    WiFiEspClient client;
     const int httpPort = 443;
 
-    if (!client.connect(host, httpPort)) {
+    if (!client.connectSSL(host, httpPort)) {
         debugPrint(F("connection failed"));
     }
 
@@ -177,19 +182,29 @@ void getPage( const char * host, const char * url ) {
     debugPrint(String("GET ") + url + " HTTP/1.1");
 
     // This will send the request to the server
-    client.print(String("GET ") + url + " HTTP/1.1\r\n" +
-                 "Host: " + host + "\r\n\r\n" );
+    client.print(String("GET ") + url + " HTTP/1.1\r\n");
+    client.print(String("Host: ") + host + "\r\n" );
+    client.print("Connection: close\r\n");
+    client.println("");
 
     unsigned long timeout = millis();
 
     // Wait for response
     while (client.available() == 0) {
-        if (millis() - timeout > 15000) {
+        if (millis() - timeout > 25000) {
             debugPrint(F(">>> Client Timeout !"));
             client.stop();
+            return;
         }
     }
 
+    debugPrint(F("Ready to read response."));
+
+ /* while (client.available()) {
+    char c = client.read();
+    Serial.write(c);
+  }
+  */
     // Read Headers
     bool lookForNewLocation = false;
     String header;
@@ -209,12 +224,13 @@ void getPage( const char * host, const char * url ) {
     }
 
     if( lookForNewLocation ) {
-      header = header.substring( 18 );
-      // Read off the remainder
+
       debugPrint(F("Reading off remainder"));
       while (client.available()) { client.readStringUntil('\n'); }
+      client.stop();
+            
       debugPrint(F("Parsing new location"));
-      //client.close();
+      header = header.substring( 18 ); // Everything after the "Location: "
       char * host1 = getHost(header);
       char * url1 = getUrl(header);
       debugPrint(F("Redirecting to " ));
@@ -226,7 +242,7 @@ void getPage( const char * host, const char * url ) {
       free(url1);
     }
     else {
-      client.readStringUntil('\n');
+      //client.readStringUntil('\n');
       // if there are incoming bytes available
       // from the server, read them and print them:
       String data = "";
@@ -256,10 +272,10 @@ void replaceAll(char * str, char oldChar, char newChar)
 {
     int i = 0;
 
-    /* Run till end of string */
+    // Run till end of string 
     while(str[i] != '\0')
     {
-        /* If occurrence of character is found */
+        // If occurrence of character is found
         if(str[i] == oldChar)
         {
             str[i] = newChar;
@@ -327,5 +343,11 @@ void utf8Ascii(char* s)
       *cp++ = c;
   }
   *cp = '\0';   // terminate the new string
+}
+
+int freeRam () {
+  extern int __heap_start, *__brkval; 
+  int v; 
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
 }
 
