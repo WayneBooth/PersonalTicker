@@ -16,5 +16,5 @@ function showTime(result) {
   Logger.log('Entered getTime');
   
   result.push( blockStart, 'Current Time');
-  result.push( itemStart, '#t' ); // read current timme locally
+  result.push( itemStart, '###time' ); // read current time locally
 }

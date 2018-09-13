@@ -1,5 +1,5 @@
-var blockStart = '@d'; // drop
-var itemStart = '@s'; // scroll
+var blockStart = '@@@drop'; // drop
+var itemStart = '@@@scroll'; // scroll
 
 function doGet() {
 
