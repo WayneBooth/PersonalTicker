@@ -11,7 +11,7 @@ MD_Parola P = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 
 /* ----------------------------------- */
 
-#define _ESPLOGLEVEL_ 3
+#define _ESPLOGLEVEL_ 1
 #include "WiFiEsp.h"
 #include "secrets.h"
 const char* host = "script.google.com";
@@ -46,7 +46,7 @@ void setup()
   debugPrint( ESP_SSID );
 
   // initialize serial for ESP module
-  Serial1.begin(9600);
+  Serial1.begin(115200);
   WiFi.init(&Serial1);
   WiFi.begin( ESP_SSID, ESP_PASS );
 
@@ -102,6 +102,10 @@ void loop()
     
     if( databuffer[a+1][0] == '#' ) {
       debugPrint(F("Current Time"));
+      if( MSF.getHasCarrier() ) {
+        printString( F("Has Carrier") );
+        printString( (String)MSF.getBitCount() );
+      }
       printString( currentTime, effect, effect );
     }
     else {
@@ -128,7 +132,6 @@ void debugPrint( String text ) {
 void debugPrint( char * text ) {
   int x = 0;
 #if LOCALDEBUG
-  Serial.println( freeRam() );
   Serial.println( text );
 #endif
 }
@@ -166,6 +169,7 @@ char * getUrl( String header) {
 
 void getPage( const char * host, const char * url ) {
 
+    String propocol = "HTTP/1.0";
     int counter = 0;
     debugPrint(F("connecting to "));
     debugPrint(host);
@@ -179,10 +183,10 @@ void getPage( const char * host, const char * url ) {
     }
 
     debugPrint(F("Requesting URL: "));
-    debugPrint(String("GET ") + url + " HTTP/1.1");
+    debugPrint(String("GET ") + url + " " + propocol);
 
     // This will send the request to the server
-    client.print(String("GET ") + url + " HTTP/1.1\r\n");
+    client.print(String("GET ") + url + " " + propocol + "\r\n");
     client.print(String("Host: ") + host + "\r\n" );
     client.print("Connection: close\r\n");
     client.println("");
@@ -192,25 +196,20 @@ void getPage( const char * host, const char * url ) {
     // Wait for response
     while (client.available() == 0) {
         if (millis() - timeout > 25000) {
-            debugPrint(F(">>> Client Timeout !"));
+            debugPrint(F(">>> Client Reply Timeout !"));
             client.stop();
             return;
         }
     }
 
     debugPrint(F("Ready to read response."));
-
- /* while (client.available()) {
-    char c = client.read();
-    Serial.write(c);
-  }
-  */
+  
     // Read Headers
     bool lookForNewLocation = false;
     String header;
     while(client.available()) {
       header = client.readStringUntil('\n');
-      if( header.startsWith("HTTP/1.1 302" ) ) {
+      if( header.startsWith(propocol + " 302" ) ) {
         lookForNewLocation = true;
       }
       Serial.println(header);
@@ -242,22 +241,18 @@ void getPage( const char * host, const char * url ) {
       free(url1);
     }
     else {
-      //client.readStringUntil('\n');
-      // if there are incoming bytes available
-      // from the server, read them and print them:
+
       String data = "";
       while (client.available()) {
         String s = client.readStringUntil('\n');
-        debugPrint(F("Read Line : "));
         debugPrint(s);
+        
         char * b = (char *)malloc( sizeof(char) * (s.length()+1) );
         s.toCharArray(b, (s.length()+1) );
         utf8Ascii(b);
 
         replaceAll(b, 176, 247);
         replaceAll(b, 163, 156);
-        
-        debugPrint(b);
         databuffer[counter++] = b;
       }
       debugPrint(F("Got Body Data"));
@@ -343,11 +338,5 @@ void utf8Ascii(char* s)
       *cp++ = c;
   }
   *cp = '\0';   // terminate the new string
-}
-
-int freeRam () {
-  extern int __heap_start, *__brkval; 
-  int v; 
-  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
 }
 
