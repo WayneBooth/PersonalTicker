@@ -6,138 +6,118 @@
 #define MAX_DEVICES 12
 #define PAUSE_TIME 800
 #define SCROLL_SPEED 20
-#define CS_PIN PA4
+#define CS_PIN 10
 MD_Parola P = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 
 /* ----------------------------------- */
-
-#define _ESPLOGLEVEL_ 1
-#include "WiFiEsp.h"
-#include "secrets.h"
-const char* host = "script.google.com";
-
-/* ----------------------------------- */
 #include <MSFDecoder.h>
-#define MSF_PIN 21
+#define MSF_PIN 3
 MSFDecoder MSF;
 
 /* ----------------------------------- */
-#define LOCALDEBUG 1
-#define WEBDATASIZE 96
-char * databuffer[WEBDATASIZE];
+#include <SoftwareSerial.h>
+#define DATA_RX 6
+#define DATA_TX 5
+SoftwareSerial dataSerial(DATA_RX, DATA_TX);
+
+/* ----------------------------------- */
 char currentTime[6] = "--:--";
+const byte numChars = 1000;
+char data[numChars];
 
+void setup() {
 
-void setup()
-{
+  // Setup Serial debugging
+  //Serial.begin(9600);
+  //delay(10);
+
+  // Setup display
   P.begin();
+  delay(10);
   printString("Starting...");
 
+  // Setup WWVB receiver
   MSF.init( MSF_PIN );
   while( ! MSF.getHasCarrier() ) {}
-  printString(F("Carrier Found"));
-  
-  Serial.begin(115200);
-  delay(10);
 
-  // We start by connecting to a WiFi network
-  debugPrint(F(""));
-  debugPrint(F("Connecting to WIFI"));
-  debugPrint( ESP_SSID );
+  // Open comms to ESP8266
+  dataSerial.begin(9600);
 
-  // initialize serial for ESP module
-  Serial1.begin(115200);
-  WiFi.init(&Serial1);
-  WiFi.begin( ESP_SSID, ESP_PASS );
-
-  while (WiFi.status() != WL_CONNECTED) {
-    debugPrint(F("WiFi connecting..."));
-    delay(500);
-  }
-
-  debugPrint(F(""));
-  debugPrint(F("WiFi connected"));
-  debugPrint(F("IP address: "));
-  debugPrint((String)WiFi.localIP());
-
-  printString(currentTime);
+  printString("Collecting Data");
 }
 
-void loop()
-{
-  static int pageFetchCounter = 1;
-  
-  if( --pageFetchCounter <= 0 ) {
-    printString(F("Collecting Data"));
-    getPage( host, PAGE );
-    pageFetchCounter = 4;
+void loop() {
+
+  static textEffect_t effect = PA_SCROLL_LEFT;
+
+  // Ask ESP8266 for data
+  dataSerial.println();
+  while(! dataSerial.available() ) {
+    delay(50);
   }
+  readLine();
+  //debugPrint( data );
 
-  Serial.println("Decoding data");
-  for ( int a = 0 ; a < WEBDATASIZE ; a=a+2 ) {
 
+  if( strcmp(data, "@@@drop") == 0 ) {
+    effect = PA_OPENING_CURSOR;
+    //debugPrint(F("It's a DROP"));
+  }
+  else if( strcmp(data, "@@@scroll") == 0 ) {
+    effect = PA_SCROLL_LEFT;
+    //debugPrint(F("It's a SCROLL"));
+  }
+  else if( data[0] == '#' ) {
     if( MSF.m_bHasValidTime ) {
-      debugPrint(F("HAS VALID TIME"));
+      //debugPrint(F("HAS VALID TIME"));
       sprintf(currentTime, "%02d:%02d", MSF.m_iHour, MSF.m_iMinute);
       MSF.m_bHasValidTime = false;
     }
-  
-    debugPrint(F("Parsing format : "));
-    debugPrint((String)a);
-    debugPrint(databuffer[a]);
-    
-    textEffect_t effect = PA_SCROLL_LEFT;
-    if( strcmp(databuffer[a], "@@@drop") == 0 ) {
-      effect = PA_OPENING_CURSOR;
-      debugPrint(F("It's a DROP"));
-    }
-    else if( strcmp(databuffer[a], "@@@scroll") == 0 ) {
-      effect = PA_SCROLL_LEFT;
-      debugPrint(F("It's a SCROLL"));
-    }
-
-    debugPrint(F("Parsing line : "));
-    debugPrint((String)a);
-    debugPrint(databuffer[a+1]);
-    
-    if( databuffer[a+1][0] == '#' ) {
-      debugPrint(F("Current Time"));
-      if( MSF.getHasCarrier() ) {
-        printString( F("Has Carrier") );
-        printString( (String)MSF.getBitCount() );
-      }
-      printString( currentTime, effect, effect );
-    }
-    else {
-      debugPrint(F("Direct Data"));
-      printString( databuffer[a+1], effect, effect );
-    }
-
-    if( pageFetchCounter == 1 ) {
-      free( databuffer[a] );
-      free( databuffer[a+1] );
-    }
-    
+    printString( currentTime, effect, effect );
   }
+  else {
+    printString( data, effect, effect );
+  }
+  //free( data );
 
+}
+
+void readLine() {
+
+  static byte ndx = 0;
+  char rc;
+
+  while ( 1 ) {
+    while(! dataSerial.available() ) {
+      delay(5);
+    }
+    rc = dataSerial.read();
+    if (rc != '\n') {
+      data[ndx] = rc;
+      ndx++;
+      if (ndx >= numChars) {
+        ndx = numChars - 1;
+      }
+    }
+
+    else {
+      data[ndx] = '\0'; // terminate the string
+      ndx = 0;
+      break;
+    }
+  }
 }
 
 void debugPrint( String text ) {
-  int x = 0;
-#if LOCALDEBUG
   Serial.println( text );
-#endif
 }
 
 void debugPrint( char * text ) {
-  int x = 0;
-#if LOCALDEBUG
   Serial.println( text );
-#endif
 }
 
 void printString( char * text ) {
-  printString( text, PA_OPENING, PA_NO_EFFECT );
+  printString( text, PA_SCROLL_LEFT, PA_NO_EFFECT );
 }
 
 void printString( char * text, textEffect_t start, textEffect_t stop ) {
@@ -145,198 +125,17 @@ void printString( char * text, textEffect_t start, textEffect_t stop ) {
   while ( ! P.displayAnimate() ) { }
 }
 
+/*
 void printString( String text ) {
-  char * s = (char *)malloc( sizeof(char) * (text.length()+1) );
-  text.toCharArray(s, (text.length()+1) );
+  char *s = StringToChars( text );
   P.displayText(s, PA_CENTER, SCROLL_SPEED, PAUSE_TIME, PA_SCROLL_LEFT, PA_NO_EFFECT);
   while ( ! P.displayAnimate() ) { }
   free(s);
 }
 
-char * getHost( String header) {
-  String host = header.substring( 0, header.indexOf("/") );
-  char * s = (char *)malloc( sizeof(char) * (host.length()+1) );
-  host.toCharArray(s, (host.length()+1) );
+char *StringToChars( String text ) {
+  char * s = (char *)malloc( sizeof(char) * (text.length()+1) );
+  text.toCharArray(s, (text.length()+1) );
   return s;
 }
-
-char * getUrl( String header) {
-  String url = header.substring( header.indexOf("/") );
-  char * s = (char *)malloc( sizeof(char) * (url.length()+1) );
-  url.toCharArray(s, (url.length()+1) );
-  return s;
-}
-
-void getPage( const char * host, const char * url ) {
-
-    String propocol = "HTTP/1.0";
-    int counter = 0;
-    debugPrint(F("connecting to "));
-    debugPrint(host);
-
-    // Use WiFiClient class to create TCP connections
-    WiFiEspClient client;
-    const int httpPort = 443;
-
-    if (!client.connectSSL(host, httpPort)) {
-        debugPrint(F("connection failed"));
-    }
-
-    debugPrint(F("Requesting URL: "));
-    debugPrint(String("GET ") + url + " " + propocol);
-
-    // This will send the request to the server
-    client.print(String("GET ") + url + " " + propocol + "\r\n");
-    client.print(String("Host: ") + host + "\r\n" );
-    client.print("Connection: close\r\n");
-    client.println("");
-
-    unsigned long timeout = millis();
-
-    // Wait for response
-    while (client.available() == 0) {
-        if (millis() - timeout > 25000) {
-            debugPrint(F(">>> Client Reply Timeout !"));
-            client.stop();
-            return;
-        }
-    }
-
-    debugPrint(F("Ready to read response."));
-  
-    // Read Headers
-    bool lookForNewLocation = false;
-    String header;
-    while(client.available()) {
-      header = client.readStringUntil('\n');
-      if( header.startsWith(propocol + " 302" ) ) {
-        lookForNewLocation = true;
-      }
-      Serial.println(header);
-      if( lookForNewLocation && header.startsWith("Location: " ) ) {
-        break;
-      }
-      if (header == "\r") {
-        debugPrint(F("headers received"));
-        break;
-      }
-    }
-
-    if( lookForNewLocation ) {
-
-      debugPrint(F("Reading off remainder"));
-      while (client.available()) { client.readStringUntil('\n'); }
-      client.stop();
-            
-      debugPrint(F("Parsing new location"));
-      header = header.substring( 18 ); // Everything after the "Location: "
-      char * host1 = getHost(header);
-      char * url1 = getUrl(header);
-      debugPrint(F("Redirecting to " ));
-      debugPrint(host1);
-      debugPrint(url1);
-      debugPrint(F(""));
-      getPage( host1, url1 );
-      free(host1);
-      free(url1);
-    }
-    else {
-
-      String data = "";
-      while (client.available()) {
-        String s = client.readStringUntil('\n');
-        debugPrint(s);
-        
-        char * b = (char *)malloc( sizeof(char) * (s.length()+1) );
-        s.toCharArray(b, (s.length()+1) );
-        utf8Ascii(b);
-
-        replaceAll(b, 176, 247);
-        replaceAll(b, 163, 156);
-        databuffer[counter++] = b;
-      }
-      debugPrint(F("Got Body Data"));
-    }
-    
-    debugPrint(F(""));
-    debugPrint(F("closing connection"));
-  
-}
-
-void replaceAll(char * str, char oldChar, char newChar)
-{
-    int i = 0;
-
-    // Run till end of string 
-    while(str[i] != '\0')
-    {
-        // If occurrence of character is found
-        if(str[i] == oldChar)
-        {
-            str[i] = newChar;
-        }
-
-        i++;
-    }
-}
-
-uint8_t utf8Ascii(uint8_t ascii)
-// Convert a single Character from UTF8 to Extended ASCII according to ISO 8859-1,
-// also called ISO Latin-1. Codes 128-159 contain the Microsoft Windows Latin-1
-// extended characters:
-// - codes 0..127 are identical in ASCII and UTF-8
-// - codes 160..191 in ISO-8859-1 and Windows-1252 are two-byte characters in UTF-8
-//                 + 0xC2 then second byte identical to the extended ASCII code.
-// - codes 192..255 in ISO-8859-1 and Windows-1252 are two-byte characters in UTF-8
-//                 + 0xC3 then second byte differs only in the first two bits to extended ASCII code.
-// - codes 128..159 in Windows-1252 are different, but usually only the €-symbol will be needed from this range.
-//                 + The euro symbol is 0x80 in Windows-1252, 0xa4 in ISO-8859-15, and 0xe2 0x82 0xac in UTF-8.
-//
-// Modified from original code at http://playground.arduino.cc/Main/Utf8ascii
-// Extended ASCII encoding should match the characters at http://www.ascii-code.com/
-//
-// Return "0" if a byte has to be ignored.
-{
-  static uint8_t cPrev;
-  uint8_t c = '\0';
-
-  if (ascii < 0x7f)   // Standard ASCII-set 0..0x7F, no conversion
-  {
-    cPrev = '\0';
-    c = ascii;
-  }
-  else
-  {
-    switch (cPrev)  // Conversion depending on preceding UTF8-character
-    {
-    case 0xC2: c = ascii;  break;
-    case 0xC3: c = ascii | 0xC0;  break;
-    case 0x82: if (ascii==0xAC) c = 0x80; // Euro symbol special case
-    }
-    cPrev = ascii;   // save last char
-  }
-
-  //PRINTX("\nConverted 0x", ascii);
-  //PRINTX(" to 0x", c);
-
-  return(c);
-}
-
-void utf8Ascii(char* s)
-// In place conversion UTF-8 string to Extended ASCII
-// The extended ASCII string is always shorter.
-{
-  uint8_t c, k = 0;
-  char *cp = s;
-
-  //PRINT("\nConverting: ", s);
-
-  while (*s != '\0')
-  {
-    c = utf8Ascii(*s++);
-    if (c != '\0')
-      *cp++ = c;
-  }
-  *cp = '\0';   // terminate the new string
-}
-
+*/
