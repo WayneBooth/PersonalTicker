@@ -48,8 +48,14 @@ function getCalendarEvents(result, calendar, maxItems, format) {
         when = Utilities.formatDate( new Date(when), "GMT", "dd/MMM/yyyy");
       }
       
+      var future_note = "";
+      if(  DateDiffInDays( new Date(event.start.date), new Date(event.end.date) ) > 1 // longer than 1 day
+        && (new Date()).valueOf() > (new Date(event.start.date)).valueOf() ) { // Already started
+        future_note = " - ends in " + DateDiffInDays( new Date(), new Date(event.end.date) ) + " days";
+      }
+      
       //Logger.log('Event found.');
-      result.push( itemStart, when + " \"" + event.summary + "\"" );
+      result.push( itemStart, when + " \"" + event.summary + "\"" + future_note );
     }
   } else {
     Logger.log('No upcoming events found.');

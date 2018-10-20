@@ -39,16 +39,26 @@ function getTweets( result, maxNumber ) {
   
   result.push( blockStart, 'Twitter Home');
   
-  var twitterService = getTwitterService();
-  var json_response = twitterService.fetch('https://api.twitter.com/1.1/statuses/home_timeline.json?exclude_replies=true&count=' + maxNumber);
-  var twitter_data = JSON.parse(json_response);
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get('Twitter Home');
+  if (cached == null) {
+    
+    var twitterService = getTwitterService();
+    var json_response = twitterService.fetch('https://api.twitter.com/1.1/statuses/home_timeline.json?exclude_replies=true&count=' + maxNumber);
+    var twitter_data = JSON.parse(json_response);
+    
+    for (var count in twitter_data) {
+      result.push( itemStart, 
+                  twitter_data[count].user.name + ' : ' 
+                  + twitter_data[count].text
+                  .replace(/\n/g, " | ") 
+      );
+    }
+    cache.put('Twitter Home', 'block twitter', 90);
+  }
   
-  for (var count in twitter_data) {
-    result.push( itemStart, 
-                twitter_data[count].user.name + ' : ' 
-                + twitter_data[count].text
-                   .replace(/\n/g, " | ") 
-                );
+  else {
+    result.push( itemStart, 'Twitter call too quick' );
   }
   
 }
